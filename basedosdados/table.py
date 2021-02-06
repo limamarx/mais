@@ -189,7 +189,7 @@ class Table(Base):
         partitioned=False,
         if_exists="raise",
         force_dataset=True,
-        force_storage_data=False,
+        force_storage_data=True,
     ):
         """Creates BigQuery table at staging dataset.
 
@@ -221,16 +221,19 @@ class Table(Base):
                 * 'replace' : Replace table
                 * 'pass' : Do nothing
             force_dataset (bool): Creates `<dataset_id>` folder and BigQuery Dataset if it doesn't exists.
-            force_storage_data (bool): Upload data to storage if it doesn't exists.
+            force_storage_data (bool): Whether to upload data to storage. 
 
         Todo:
 
             * Implement if_exists=raise
             * Implement if_exists=pass
         """
+        
+        # When releasing data to production, the storage will be filled
         if force_storage_data:
-            pass
-        else:
+            
+            # TODO: deletes if exists
+            
             # Add data to storage
             if isinstance(
                 path,
@@ -244,7 +247,20 @@ class Table(Base):
                     path, mode="staging", if_exists="replace"
                 )
                 self.init(data_sample_path=path, if_exists="replace")
+                
+       # Create Dataset if it doesn't exist
+        if force_dataset:
+            dataset_obj = Dataset(self.dataset_id, **self.main_vars)
+            try:
+                dataset_obj.init()
+            except FileExistsError:
+                pass
 
+            dataset_obj.create(if_exists="pass")
+        
+        
+        # Creates external config to CSV
+        # TODO: allow different data types such as parquet
         external_config = external_config = bigquery.ExternalConfig("CSV")
         external_config.options.skip_leading_rows = 1
         external_config.options.allow_quoted_newlines = True
@@ -255,7 +271,8 @@ class Table(Base):
         external_config.source_uris = (
             f"gs://{self.bucket_name}/staging/{self.dataset_id}/{self.table_id}/*"
         )
-
+        
+        # Add partition config
         if partitioned:
 
             hive_partitioning = bigquery.external_config.HivePartitioningOptions()
@@ -264,21 +281,11 @@ class Table(Base):
                 dataset=self.dataset_id, table=self.table_id
             ).replace("*", "")
             external_config.hive_partitioning = hive_partitioning
-
-        # Create Dataset if it doesn't exist
-        if force_dataset:
-            dataset_obj = Dataset(self.dataset_id, **self.main_vars)
-            try:
-                dataset_obj.init()
-            except FileExistsError:
-                pass
-
-            dataset_obj.create(if_exists="pass")
-
+        
+        # Create table object 
         table = bigquery.Table(self.table_full_name["staging"])
-
         table.external_data_configuration = external_config
-
+        
         if if_exists == "replace":
             self.delete(mode="staging")
 
